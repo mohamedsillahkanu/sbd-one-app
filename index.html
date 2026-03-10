@@ -421,11 +421,12 @@ html,body{min-height:100%;font-family:'DM Sans',sans-serif;background:var(--gray
 .tl-time{font-size:10px;color:var(--text-s);margin-top:2px;}
 
 </style>
-<script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<!-- CDN libs loaded with defer so they never block login -->
+<script defer src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script defer src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 
@@ -1379,6 +1380,13 @@ html,body{min-height:100%;font-family:'DM Sans',sans-serif;background:var(--gray
 <div id="qr-reader4" style="display:none;"></div>
 
 <script>
+// Global error catcher — shows message if JS crashes
+window.onerror = function(msg, src, line) {
+  var btn = document.getElementById('login-btn');
+  if(btn) { btn.disabled = false; btn.textContent = 'SIGN IN →'; }
+  console.error('JS Error:', msg, 'line', line);
+  return false;
+};
 // ═══════════════════════════════════════════════════════════════
 // SBD ITN SYSTEM — ICF-SL  |  app.js  v2.0
 // All users loaded from users.csv · QR codes validated against registry
@@ -1618,41 +1626,50 @@ function selectRole(r){
 }
 
 function doLogin(){
-  const u=document.getElementById('loginUser').value.trim();
-  const p=document.getElementById('loginPass').value.trim();
-  if(!u||!p){showErr('Please enter credentials.');return;}
-  if(!USERS_LOADED){showErr('System still loading — please wait.');return;}
-  const usr=USERS[u];
-  if(!usr||usr.pass!==p){showErr('Invalid username or password.');return;}
-  if(selectedRole&&usr.role!==selectedRole){showErr('Role mismatch. Registered as: '+usr.role.toUpperCase());return;}
-  document.getElementById('splErr').classList.remove('show');
-  S.role=usr.role; S.user={...usr,username:u};
-  initRole();
+  try {
+    const u=(document.getElementById('loginUser').value||'').trim();
+    const p=(document.getElementById('loginPass').value||'').trim();
+    console.log('Login attempt:', u, '/ pass length:', p.length);
+    if(!u||!p){showErr('Enter username and password.');return;}
+    const usr=USERS[u];
+    console.log('User found:', !!usr, '| Users loaded:', USERS_LOADED, '| Total users:', Object.keys(USERS).length);
+    if(!usr||usr.pass!==p){showErr('Wrong username or password. Try: dhmt1 / 1234');return;}
+    if(selectedRole&&usr.role!==selectedRole){showErr('Role mismatch — you are registered as: '+usr.role.toUpperCase());return;}
+    const e=document.getElementById('splErr'); if(e) e.classList.remove('show');
+    S.role=usr.role; S.user=Object.assign({},usr,{username:u});
+    console.log('Login success, role:', S.role);
+    initRole();
+  } catch(err) {
+    console.error('doLogin error:', err);
+    showErr('Login error: '+err.message);
+  }
 }
 function showErr(m){const e=document.getElementById('splErr');if(e){e.textContent=m;e.classList.add('show');}}
 function doLogout(){S.role=null;S.user=null;stopAllQR();const pi=document.getElementById('loginPass');if(pi)pi.value='';showScreen('splash');}
 
 document.addEventListener('DOMContentLoaded',()=>{
-  // ✅ FIX: Set fallback users IMMEDIATELY so login always works
-  // CSV loading is non-blocking — it upgrades USERS in the background
-  USERS = {...FALLBACK_USERS};
-  USERS_LOADED = true;
+  try {
+    // Set users immediately — never wait for CSV
+    USERS = Object.assign({}, FALLBACK_USERS);
+    USERS_LOADED = true;
 
-  const pi=document.getElementById('loginPass');
-  const ui=document.getElementById('loginUser');
-  if(pi) pi.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
-  if(ui) ui.addEventListener('keydown',e=>{if(e.key==='Enter')pi?.focus();});
-  setupDistCascade();
-  setupDistGPS();
-  setupDistSignature();
+    var pi = document.getElementById('loginPass');
+    var ui = document.getElementById('loginUser');
+    if(pi) pi.addEventListener('keydown', function(e){ if(e.key==='Enter') doLogin(); });
+    if(ui) ui.addEventListener('keydown', function(e){ if(e.key==='Enter') { if(pi) pi.focus(); } });
 
-  // Load users.csv silently in background — upgrades login if found
-  loadUserData().catch(()=>{});
+    // Safe setup — each wrapped so one crash doesn't kill others
+    try { setupDistCascade(); } catch(e) { console.warn('cascade:', e); }
+    try { setupDistGPS(); } catch(e) {}
+    try { setupDistSignature(); } catch(e) {}
 
-  // Load location cascade CSV silently in background
-  loadLocationData().then(()=>{
-    populateDistCascade();
-  }).catch(()=>{});
+    // Load CSVs in background (needs internet — non-blocking)
+    try { loadUserData().catch(function(){}); } catch(e) {}
+    try { loadLocationData().then(function(){ populateDistCascade(); }).catch(function(){}); } catch(e) {}
+
+  } catch(e) {
+    console.error('DOMContentLoaded error:', e);
+  }
 });
 
 function initRole(){
