@@ -443,6 +443,28 @@
             50% { opacity: 0.3; }
             100% { opacity: 1; }
         }
+
+        /* Driver username field with eye icon */
+        .driver-password-container {
+            position: relative;
+            width: 100%;
+        }
+        
+        .driver-password-container input {
+            width: 100%;
+            padding-right: 45px;
+        }
+        
+        .driver-eye-icon {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            cursor: pointer;
+            color: var(--navy);
+            font-size: 1.2rem;
+            user-select: none;
+        }
     </style>
 </head>
 <body>
@@ -589,9 +611,12 @@
                         
                         <div>
                             <div style="margin-bottom:15px;">
-                                <label class="label">OR ENTER DRIVER USERNAME</label>
+                                <label class="label">OR ENTER DRIVER USERNAME (CONFIDENTIAL)</label>
                                 <div style="display:flex; gap:6px;">
-                                    <input class="input" id="driverUsername" placeholder="e.g. DRV-PL-01">
+                                    <div class="driver-password-container">
+                                        <input type="password" class="input" id="driverUsername" placeholder="Enter driver username">
+                                        <span class="driver-eye-icon" id="toggleDriverPassword">👁️</span>
+                                    </div>
                                     <button class="btn" onclick="verifyDriverManually()">VERIFY</button>
                                 </div>
                             </div>
@@ -604,6 +629,26 @@
                                 <div id="verifiedDriverDetails"></div>
                             </div>
                         </div>
+                    </div>
+                </div>
+                
+                <!-- Vehicle Plate (Manual Entry) -->
+                <div class="grid-2" style="margin-top:15px;">
+                    <div>
+                        <label class="label">VEHICLE PLATE (OPTIONAL)</label>
+                        <input class="input" id="vehiclePlate" placeholder="e.g. ABC-123">
+                    </div>
+                    <div>
+                        <label class="label">VEHICLE TYPE</label>
+                        <select class="select" id="vehicleType">
+                            <option value="">—Select—</option>
+                            <option value="Motorcycle">Motorcycle</option>
+                            <option value="Pickup">Pickup</option>
+                            <option value="Truck">Truck</option>
+                            <option value="SUV">SUV</option>
+                            <option value="Bicycle">Bicycle</option>
+                            <option value="Other">Other</option>
+                        </select>
                     </div>
                 </div>
                 
@@ -633,7 +678,6 @@
                                 <th>Total</th>
                                 <th>Driver</th>
                                 <th>Vehicle</th>
-                                <th>Driver ID</th>
                                 <th>Synced</th>
                             </tr>
                         </thead>
@@ -652,14 +696,18 @@
                 <div class="stats-grid" id="syncStats"></div>
                 
                 <div style="background: #f8f9fa; border-radius: 12px; padding: 20px; margin-top: 20px;">
-                    <h3 style="color:var(--navy); margin-bottom:15px;">Manual Sync</h3>
+                    <h3 style="color:var(--navy); margin-bottom:15px;">Google Sheets Configuration</h3>
                     <div style="display:flex; gap:10px; align-items:center;">
-                        <input class="input" id="sheetsWebhookUrl" placeholder="Enter Google Sheets Webhook URL" style="flex:1;">
-                        <button class="btn btn-green" onclick="testSheetsConnection()">TEST CONNECTION</button>
+                        <input class="input" id="sheetsWebhookUrl" placeholder="PASTE YOUR GOOGLE SHEETS WEBHOOK URL HERE" style="flex:1;">
+                        <button class="btn btn-green" onclick="saveSheetsUrl()">SAVE URL</button>
                     </div>
                     <p style="font-size:0.75rem; color:#666; margin-top:10px;">
                         Webhook URL format: https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec
                     </p>
+                    <div style="margin-top:10px;">
+                        <button class="btn btn-outline" onclick="testSheetsConnection()">TEST CONNECTION</button>
+                        <button class="btn btn-gold" onclick="retryPendingSync()" style="margin-left:10px;">RETRY PENDING SYNC</button>
+                    </div>
                 </div>
                 
                 <div style="margin-top:20px;">
@@ -677,7 +725,8 @@
 
 <script>
     // ==================== CONFIGURATION ====================
-    const GOOGLE_SHEETS_WEBHOOK = 'https://script.google.com/macros/s/AKfycbxUoHhGvJy6z7kF9x8W3R2mN5pQ4lK1jH2gF3dS6aE7rT8yU9i/exec'; // Replace with your actual webhook
+    // Placeholder for Google Sheets webhook URL - user will paste their own
+    let GOOGLE_SHEETS_WEBHOOK = localStorage.getItem('google_sheets_webhook') || '';
     
     // ==================== DATA STORES ====================
     let users = [];
@@ -753,6 +802,18 @@
         }
     });
 
+    // Driver username field toggle
+    document.getElementById('toggleDriverPassword').addEventListener('click', function() {
+        const input = document.getElementById('driverUsername');
+        if (input.type === 'password') {
+            input.type = 'text';
+            this.textContent = '🔒';
+        } else {
+            input.type = 'password';
+            this.textContent = '👁️';
+        }
+    });
+
     document.getElementById('loginBtn').addEventListener('click', () => {
         const username = document.getElementById('loginUsername').value.trim();
         const user = users.find(u => u.username === username && u.role === 'DMS Staff');
@@ -767,6 +828,9 @@
         document.getElementById('loginOverlay').style.display = 'none';
         document.getElementById('appMain').style.display = 'block';
         document.getElementById('staffNameSpan').textContent = `${user.full_name} (${user.district})`;
+        
+        // Load saved webhook URL
+        document.getElementById('sheetsWebhookUrl').value = GOOGLE_SHEETS_WEBHOOK;
         
         initDispatch();
         updateDashboard();
@@ -955,7 +1019,6 @@
         document.getElementById('verifiedDriverDetails').innerHTML = `
             <div><strong>Username:</strong> ${driver.username}</div>
             <div><strong>District:</strong> ${driver.district}</div>
-            <div><strong>Vehicle:</strong> ${driver.vehicle || 'Not assigned'}</div>
             <div><strong>Phone:</strong> ${driver.phone || 'N/A'}</div>
         `;
         document.getElementById('driverVerifiedCard').style.display = 'block';
@@ -1016,6 +1079,13 @@
             return;
         }
         
+        // Get vehicle info (manual entry)
+        const vehiclePlate = document.getElementById('vehiclePlate').value.trim();
+        const vehicleType = document.getElementById('vehicleType').value;
+        const vehicleInfo = vehiclePlate ? 
+            (vehicleType ? `${vehiclePlate} (${vehicleType})` : vehiclePlate) : 
+            (vehicleType || 'Not specified');
+        
         // Get district from chiefdom
         let district = '';
         for (const d in HIERARCHY_DATA) {
@@ -1039,8 +1109,8 @@
                    (parseInt(document.getElementById('pbo').value) || 0),
             driverName: verifiedDriver.full_name,
             driverUsername: verifiedDriver.username,
-            driverVehicle: verifiedDriver.vehicle || 'Not assigned',
             driverPhone: verifiedDriver.phone || 'N/A',
+            vehicleInfo: vehicleInfo,
             staffName: currentStaff.full_name,
             staffUsername: currentStaff.username,
             staffDistrict: currentStaff.district,
@@ -1054,19 +1124,26 @@
         localStorage.setItem('dms_chiefdom_records', JSON.stringify(records));
         dispatchedPHUs.add(phu);
         
-        // Try to sync to Google Sheets
-        updateSyncStatus('Syncing...');
-        const syncResult = await syncToGoogleSheets(record);
-        
-        if (syncResult.success) {
-            record.synced = true;
-            record.syncedAt = new Date().toISOString();
-            showToast('Dispatch saved and synced to Google Sheets!', 'success');
+        // Try to sync to Google Sheets if URL is configured
+        if (GOOGLE_SHEETS_WEBHOOK) {
+            updateSyncStatus('Syncing...');
+            const syncResult = await syncToGoogleSheets(record);
+            
+            if (syncResult.success) {
+                record.synced = true;
+                record.syncedAt = new Date().toISOString();
+                showToast('Dispatch saved and synced to Google Sheets!', 'success');
+            } else {
+                // Add to pending sync queue
+                pendingSync.push(record);
+                localStorage.setItem('dms_pending_sync', JSON.stringify(pendingSync));
+                showToast('Saved locally. Will retry sync later.', 'error');
+            }
         } else {
-            // Add to pending sync queue
+            // No webhook configured, just save locally
             pendingSync.push(record);
             localStorage.setItem('dms_pending_sync', JSON.stringify(pendingSync));
-            showToast('Saved locally. Will retry sync later.', 'error');
+            showToast('Saved locally. Configure Google Sheets URL in Sync tab.', 'error');
         }
         
         // Update records with sync status
@@ -1082,7 +1159,20 @@
     };
 
     // ==================== GOOGLE SHEETS SYNC ====================
+    window.saveSheetsUrl = function() {
+        const url = document.getElementById('sheetsWebhookUrl').value.trim();
+        if (url) {
+            GOOGLE_SHEETS_WEBHOOK = url;
+            localStorage.setItem('google_sheets_webhook', url);
+            showToast('Google Sheets URL saved!', 'success');
+        }
+    };
+
     async function syncToGoogleSheets(record) {
+        if (!GOOGLE_SHEETS_WEBHOOK) {
+            return { success: false, error: 'No webhook configured' };
+        }
+        
         try {
             // Prepare data for Google Sheets
             const sheetData = {
@@ -1098,8 +1188,8 @@
                 total: record.total,
                 driverName: record.driverName,
                 driverUsername: record.driverUsername,
-                driverVehicle: record.driverVehicle,
                 driverPhone: record.driverPhone,
+                vehicleInfo: record.vehicleInfo,
                 staffName: record.staffName,
                 staffUsername: record.staffUsername,
                 staffDistrict: record.staffDistrict
@@ -1108,7 +1198,7 @@
             // Send to Google Sheets webhook
             const response = await fetch(GOOGLE_SHEETS_WEBHOOK, {
                 method: 'POST',
-                mode: 'no-cors', // Required for Google Apps Script
+                mode: 'no-cors',
                 headers: {
                     'Content-Type': 'application/json',
                 },
@@ -1141,14 +1231,46 @@
         }
     }
 
-    async function retryPendingSync() {
+    window.testSheetsConnection = async function() {
+        if (!GOOGLE_SHEETS_WEBHOOK) {
+            showToast('Please save Google Sheets URL first', 'error');
+            return;
+        }
+        
+        try {
+            const testRecord = {
+                test: true,
+                timestamp: new Date().toISOString(),
+                message: 'Connection test from ICF-SL DMS System'
+            };
+            
+            await fetch(GOOGLE_SHEETS_WEBHOOK, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(testRecord)
+            });
+            
+            showToast('Connection test sent! Check your Google Sheet.', 'success');
+        } catch (error) {
+            showToast('Connection failed: ' + error.message, 'error');
+        }
+    };
+
+    window.retryPendingSync = async function() {
         if (pendingSync.length === 0) {
             showToast('No pending sync items', 'success');
             return;
         }
         
+        if (!GOOGLE_SHEETS_WEBHOOK) {
+            showToast('Please configure Google Sheets URL first', 'error');
+            return;
+        }
+        
         updateSyncStatus('Retrying sync...');
         const stillPending = [];
+        let syncedCount = 0;
         
         for (const record of pendingSync) {
             const result = await syncToGoogleSheets(record);
@@ -1159,6 +1281,7 @@
                 if (mainRecord) {
                     mainRecord.synced = true;
                 }
+                syncedCount++;
             } else {
                 stillPending.push(record);
             }
@@ -1172,8 +1295,8 @@
         renderRecords();
         renderSyncStatus();
         
-        showToast(`Synced ${pendingSync.length} items`, 'success');
-    }
+        showToast(`Synced ${syncedCount} items, ${pendingSync.length} remaining`, 'success');
+    };
 
     function updateSyncStatus(status = 'Ready') {
         document.getElementById('syncText').textContent = status;
@@ -1205,7 +1328,6 @@
             <div class="stat-card">
                 <div class="label">PENDING</div>
                 <div class="value">${pending}</div>
-                <div class="sub"><button class="btn btn-gold" style="padding:4px 8px; font-size:0.7rem;" onclick="retryPendingSync()">RETRY</button></div>
             </div>
             <div class="stat-card">
                 <div class="label">FAILED</div>
@@ -1220,38 +1342,11 @@
                 <span style="color:${log.status === 'success' ? 'var(--green)' : 'var(--red)'};">
                     ${log.status === 'success' ? '✓' : '✗'}
                 </span>
-                <span style="flex:1;">${log.dispatchId}</span>
+                <span style="flex:1;">${log.dispatchId || 'Test'}</span>
                 <span style="color:#666;">${new Date(log.timestamp).toLocaleTimeString()}</span>
             </div>
         `).join('') || '<p>No sync activity</p>';
     }
-
-    window.testSheetsConnection = async function() {
-        const url = document.getElementById('sheetsWebhookUrl').value;
-        if (!url) {
-            showToast('Please enter webhook URL', 'error');
-            return;
-        }
-        
-        try {
-            const testRecord = {
-                test: true,
-                timestamp: new Date().toISOString(),
-                message: 'Connection test'
-            };
-            
-            await fetch(url, {
-                method: 'POST',
-                mode: 'no-cors',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(testRecord)
-            });
-            
-            showToast('Connection test sent! Check your Google Sheet.', 'success');
-        } catch (error) {
-            showToast('Connection failed: ' + error.message, 'error');
-        }
-    };
 
     // ==================== RESET FORM ====================
     window.resetForm = function() {
@@ -1260,6 +1355,8 @@
         document.getElementById('phuSel').disabled = true;
         document.getElementById('ig2').value = '0';
         document.getElementById('pbo').value = '0';
+        document.getElementById('vehiclePlate').value = '';
+        document.getElementById('vehicleType').value = '';
         document.getElementById('totalItnSpan').textContent = '0';
         document.getElementById('phuStatusWarning').style.display = 'none';
         
@@ -1379,7 +1476,7 @@
                                 <div style="font-size:0.65rem; margin-top:5px;">
                                     ITNs: ${dispatch.total}<br>
                                     Driver: ${dispatch.driverName}<br>
-                                    ID: ${dispatch.driverUsername}
+                                    Vehicle: ${dispatch.vehicleInfo || 'N/A'}
                                 </div>
                             ` : ''}
                         </div>
@@ -1396,7 +1493,7 @@
         const tbody = document.getElementById('recordsTable');
         
         if (!records.length) {
-            tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;">No records yet</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;">No records yet</td></tr>';
             return;
         }
         
@@ -1415,8 +1512,7 @@
                 <td>${r.pbo}</td>
                 <td><strong>${r.total}</strong></td>
                 <td>${r.driverName}</td>
-                <td>${r.driverVehicle}</td>
-                <td>${r.driverUsername}</td>
+                <td>${r.vehicleInfo || 'N/A'}</td>
                 <td><span style="color:${r.synced ? 'var(--green)' : 'var(--red)'};">${r.synced ? '✓' : '⏳'}</span></td>
             </tr>
         `).join('');
